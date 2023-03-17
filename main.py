@@ -1,4 +1,3 @@
-import json
 import io
 import logging
 from sklearn.neighbors import NearestNeighbors
