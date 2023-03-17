@@ -179,7 +179,7 @@ st.set_page_config(
 
 @st.cache_resource
 def load_data():
-    df = pd.read_parquet('/Users/user/repos/galaxy-explorer-streamlit/50k_pca_2n.parquet')
+    df = pd.read_parquet('50k_pca_2n.parquet')
 
     X = df[['pca_0', 'pca_1']]
     # will always return 100 neighbours, cut list when used
