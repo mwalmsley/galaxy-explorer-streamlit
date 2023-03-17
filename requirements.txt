@@ -4,3 +4,4 @@ pandas
 pillow
 matplotlib
 streamlit_image_coordinates
+scikit-learn
