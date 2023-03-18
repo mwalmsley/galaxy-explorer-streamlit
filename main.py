@@ -8,15 +8,39 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-def main(df, tree):
+def update_representation_choice(reduction_name):
+    if reduction_name == 'UMAP':
+        feature_cols = ['umap_0', 'umap_1']
+    else:
+        feature_cols = ['pca_0', 'pca_1']
 
+    st.session_state['feature_cols'] = feature_cols  # to use elsewhere
+
+def update_center_coords(df):
     # on first run, default like so
-    x_center = np.mean([df['pca_0'].min(), df['pca_0'].max()])
-    y_center = np.mean([df['pca_1'].min(), df['pca_1'].max()])
+    x_center = np.mean([df[st.session_state['feature_cols'][0]].min(), df[st.session_state['feature_cols'][0]].max()])
+    y_center = np.mean([df[st.session_state['feature_cols'][1]].min(), df[st.session_state['feature_cols'][1]].max()])
     if 'x' not in st.session_state:
         st.session_state['x'] = x_center
     if 'y' not in st.session_state:
         st.session_state['y'] = y_center
+
+
+def main():
+
+    # TODO use session_state and dropdown to specify umap/pca
+    # TODO use tabs to allow more galaxies
+    # TODO mke galaxies clickable for id_str with on_click callback
+    reduction_name = st.selectbox('Select Reduction', ['UMAP', 'PCA'])
+    update_representation_choice(reduction_name)
+
+    if reduction_name == 'UMAP':
+        df = load_umap()
+    else:
+        df = load_pca()
+    update_center_coords(df)
+    
+    tree = fit_tree(df)
 
     st.title('Galaxy Zoo Explorer')
     st.subheader('by Mike Walmsley ([@mike\_walmsley\_](https://twitter.com/mike_walmsley_))')
@@ -43,6 +67,7 @@ def main(df, tree):
     with col2:
         # read the state 
         galaxies = get_closest_galaxies(
+            df,
             tree,
             st.session_state['x'],
             st.session_state['y'],
@@ -61,10 +86,8 @@ def tell_me_more():
     """)
 
 
-
 def show_explorer(df):
     return show_latent_space_interface(df)
-
 
 
 def show_latent_space_interface(df):
@@ -72,12 +95,8 @@ def show_latent_space_interface(df):
     fig, ax = plot_latent_space(df, st.session_state['x'], st.session_state['y'])
     fig.tight_layout()
 
-    buf = io.BytesIO()
-    fig.savefig(buf, format='jpg', dpi=100)
-    buf.seek(0)
-    im = Image.open(buf)
-    # im.show()
-    # buf.close()
+    # https://stackoverflow.com/questions/8598673/how-to-save-a-pylab-figure-into-in-memory-file-which-can-be-read-into-pil-image/8598881
+    im = fig_to_pil(fig)
 
     # https://github.com/blackary/streamlit-image-coordinates
     x_y_dict = streamlit_image_coordinates(im) # None or {x: x, y: y}
@@ -88,19 +107,31 @@ def show_latent_space_interface(df):
         # was a click, return as coordinates
         x_pix, y_pix = x_y_dict['x'], x_y_dict['y']
         x, y = ax.transData.inverted().transform([x_pix, y_pix])
-        y = -y+.5  # matplotlib coordinates
+        if st.session_state['feature_cols'] == ['umap_0', 'umap_1']:
+            offset = 10.1
+        else:
+            offset = .5  # pca
+        y = -y + offset
         return x, y
+
+
+def fig_to_pil(fig):
+    buf = io.BytesIO()
+    fig.savefig(buf, format='jpg', dpi=100)
+    buf.seek(0)
+    return Image.open(buf)
 
 
 def plot_latent_space(df, x=None, y=None, figsize=(4, 4)):
     fig, ax = plt.subplots(figsize=figsize)
-    ax.scatter(df['pca_0'], df['pca_1'], s=.3, alpha=.07)
+    feature_cols = st.session_state['feature_cols']
+    ax.scatter(df[feature_cols[0]], df[feature_cols[1]], s=.3, alpha=.07)
     if x is not None:
         ax.scatter(x, y, marker='+', c='r')
     plt.axis('off')
     return fig, ax
 
-def get_closest_galaxies(tree, x, y, max_neighbours=1):
+def get_closest_galaxies(df, tree, x, y, max_neighbours=1):
     # st.markdown(x)
     # st.markdown(y)
     _, indices = tree.kneighbors(np.array([x, y]).reshape(1, 2))
@@ -178,14 +209,18 @@ st.set_page_config(
 )
 
 @st.cache_resource
-def load_data():
-    df = pd.read_parquet('50k_pca_2n.parquet')
+def load_umap():
+    return pd.read_parquet('100k_umap_2n.parquet')
 
-    X = df[['pca_0', 'pca_1']]
+@st.cache_resource
+def load_pca():
+    return pd.read_parquet('100k_pca_2n.parquet')
+
+def fit_tree(df):
+    X = df[st.session_state['feature_cols']]
     # will always return 100 neighbours, cut list when used
     nbrs = NearestNeighbors(n_neighbors=100, algorithm='ball_tree').fit(X)
-
-    return df, nbrs
+    return nbrs
     # df_locs = ['decals_{}.csv'.format(n) for n in range(4)]
     # dfs = [pd.read_csv(df_loc) for df_loc in df_locs]
     # return pd.concat(dfs)
@@ -194,6 +229,4 @@ if __name__ == '__main__':
 
     logging.basicConfig(level=logging.CRITICAL)
 
-    df, tree = load_data()
-
-    main(df, tree)
+    main()
