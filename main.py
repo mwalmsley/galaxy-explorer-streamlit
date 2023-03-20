@@ -65,7 +65,7 @@ def main():
             tree,
             st.session_state['x'],
             st.session_state['y'],
-            max_neighbours=500
+            max_neighbours=1000
         )
         galaxies['url'] = galaxies.apply(get_galaxy_url, axis=1)
         show_gallery_of_galaxies(galaxies[:12])
@@ -73,9 +73,9 @@ def main():
         csv = convert_df(galaxies)
 
         st.download_button(
-            label="Download CSV",
+            label="Download CSV of the 1000 galaxies closest to your search",
             data=csv,
-            file_name='closest_500_galaxies.csv',
+            file_name='closest_1000_galaxies.csv',
             mime='text/csv',
         )
 
@@ -96,6 +96,10 @@ def tell_me_more():
     The 30-dimensional embedding is then visualised with UMAP
     (set to min_dist=0.01 and n_neighbours=200, to allow clumps and focus on global structure).
 
+    The galaxies shown are those closest to your selected point in latent space.
+    The closest galaxies are shown first.
+    To save your results and see more than 12 galaxies, press the "Download CSV" button under the images.
+
     The galaxies are drawn from the DESI Legacy Surveys.
     Only galaxies with redshift below z=0.1 are shown.
     Redshifts are spectroscopic where available from SDSS and photometric otherwise.
@@ -113,7 +117,11 @@ def tell_me_more():
 @st.cache_data
 def convert_df(df):
     # IMPORTANT: Cache the conversion to prevent computation on every rerun
-    return df.to_csv(index=False).encode('utf-8')
+    df['brickid'] = df['id_str'].apply(lambda x: x.split('_')[0])
+    df['objid'] = df['id_str'].apply(lambda x: x.split('_')[1])
+    df = df.rename(columns={'feat_0': 'umap_x', 'feat_1': 'umap_y'})
+    # re-order cols
+    return df[['id_str', 'brickid', 'objid', 'ra', 'dec', 'est_dr5_pixscale', 'umap_x', 'umap_y', 'url']].to_csv(index=False).encode('utf-8')
 
 
 
