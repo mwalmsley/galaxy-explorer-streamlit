@@ -8,18 +8,11 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-def update_representation_choice(reduction_name):
-    if reduction_name == 'UMAP':
-        feature_cols = ['umap_0', 'umap_1']
-    else:
-        feature_cols = ['pca_0', 'pca_1']
-
-    st.session_state['feature_cols'] = feature_cols  # to use elsewhere
 
 def update_center_coords(df):
     # on first run, default like so
-    x_center = np.mean([df[st.session_state['feature_cols'][0]].min(), df[st.session_state['feature_cols'][0]].max()])
-    y_center = np.mean([df[st.session_state['feature_cols'][1]].min(), df[st.session_state['feature_cols'][1]].max()])
+    x_center = np.mean([df['feat_0'].min(), df['feat_0'].max()])
+    y_center = np.mean([df['feat_1'].min(), df['feat_1'].max()])
     if 'x' not in st.session_state:
         st.session_state['x'] = x_center
     if 'y' not in st.session_state:
@@ -28,40 +21,41 @@ def update_center_coords(df):
 
 def main():
 
-    # TODO use session_state and dropdown to specify umap/pca
     # TODO use tabs to allow more galaxies
     # TODO mke galaxies clickable for id_str with on_click callback
-    reduction_name = st.selectbox('Select Reduction', ['UMAP', 'PCA'])
-    update_representation_choice(reduction_name)
-
-    if reduction_name == 'UMAP':
-        df = load_umap()
-    else:
-        df = load_pca()
-    update_center_coords(df)
-    
-    tree = fit_tree(df)
 
     st.title('Galaxy Zoo Explorer')
     st.subheader('by Mike Walmsley ([@mike\_walmsley\_](https://twitter.com/mike_walmsley_))')
 
     st.markdown('---')
 
+
     col1, col2 = st.columns([1, 2])
 
     with col1:
+        # add these first, as we need to have selectbox already to choose which to load
         st.markdown('## Move Around')
-        st.markdown('Click anywhere on the latent space to view galaxies')
+        st.markdown('Click anywhere on the latent space to view galaxies.')
+        reduction_name = st.selectbox(
+            'Select Reduction', ['Featured v2', 'Featured v1', 'Featured and Smooth']
+        )
+
+    df = load_umap(reduction_name)
+    update_center_coords(df)
+    
+    tree = fit_tree(df)
+
+    with col1:
         with st.empty():
-            new_coords = show_explorer(df) # will read current state
+            new_coords = show_latent_space_interface(df, reduction_name) # will read current state
             if new_coords:
             # if we had a click, update the state
                 st.session_state['x'] = new_coords[0]
                 st.session_state['y'] = new_coords[1]
                 # rerun
-                show_explorer(df)
-        # st.markdown(st.session_state['x'])
-        # st.markdown(st.session_state['y'])
+                show_latent_space_interface(df, reduction_name)
+
+        st.markdown('Location: ({:.3f}, {:.3f})'.format(st.session_state['x'], st.session_state['y']))
         # if no click (i.e. on first run), will not update the state
 
     with col2:
@@ -71,26 +65,59 @@ def main():
             tree,
             st.session_state['x'],
             st.session_state['y'],
-            max_neighbours=12
+            max_neighbours=500
         )
-        show_gallery_of_galaxies(galaxies)
+        galaxies['url'] = galaxies.apply(get_galaxy_url, axis=1)
+        show_gallery_of_galaxies(galaxies[:12])
+
+        csv = convert_df(galaxies)
+
+        st.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name='closest_500_galaxies.csv',
+            mime='text/csv',
+        )
+
     
     st.markdown('---')
-    with st.expander('Tell me more'):
-        tell_me_more()
+    # with st.expander('Tell me more'):
+    tell_me_more()
     
 
 def tell_me_more():
     st.markdown("""
-    Here, I may explain some things - but not yet.
+    This explorer visualises the internal representation of [Zoobot](github.com/mwalmsley/zoobot),
+    Galaxy Zoo's deep learning model. 
+    This version of Zoobot is trained to predict the responses of volunteers from all major Galaxy Zoo projects.
+
+    Zoobot's overparametrized representation is first compressed from 1280 to 30 dimensions with iterative PCA.
+    This preserves about 98\% of the variance. 
+    The 30-dimensional embedding is then visualised with UMAP
+    (set to min_dist=0.01 and n_neighbours=200, to allow clumps and focus on global structure).
+
+    The galaxies are drawn from the DESI Legacy Surveys.
+    Only galaxies with redshift below z=0.1 are shown.
+    Redshifts are spectroscopic where available from SDSS and photometric otherwise.
+    Representations for all DESI-LS galaxies will be available with the upcoming GZ DESI data release.
+
+    - "Featured v2" includes 500k galaxies predicted to have more than half of volunteers respond "Featured". 
+    - "Featured v1" is identical but includes only 100k galaxies.
+    - "Featured and Smooth" shows 100k galaxies selected randomly i.e. including (and dominated by) smoother galaxies.
+
+    *Thanks to Dustin Lang for creating the DESI-LS cutout service used here to dynamically show the images.
+    And of course, thanks to the Galaxy Zoo volunteers who make all of this possible. I hope this is a helpful tool for you.*
     """)
 
 
-def show_explorer(df):
-    return show_latent_space_interface(df)
+@st.cache_data
+def convert_df(df):
+    # IMPORTANT: Cache the conversion to prevent computation on every rerun
+    return df.to_csv(index=False).encode('utf-8')
 
 
-def show_latent_space_interface(df):
+
+def show_latent_space_interface(df, reduction_name):
 
     fig, ax = plot_latent_space(df, st.session_state['x'], st.session_state['y'])
     fig.tight_layout()
@@ -107,10 +134,14 @@ def show_latent_space_interface(df):
         # was a click, return as coordinates
         x_pix, y_pix = x_y_dict['x'], x_y_dict['y']
         x, y = ax.transData.inverted().transform([x_pix, y_pix])
-        if st.session_state['feature_cols'] == ['umap_0', 'umap_1']:
-            offset = 10.1
+        if reduction_name == 'Featured v2':
+            offset = 9.4
+        elif reduction_name == 'Featured v1':
+            offset = 9.8
+        elif reduction_name == 'Featured and Smooth':
+            offset = 10.
         else:
-            offset = .5  # pca
+            raise ValueError(reduction_name)
         y = -y + offset
         return x, y
 
@@ -122,12 +153,13 @@ def fig_to_pil(fig):
     return Image.open(buf)
 
 
-def plot_latent_space(df, x=None, y=None, figsize=(4, 4)):
+def plot_latent_space(df, x=None, y=None, figsize=(4, 4), data_pad=0.1):
     fig, ax = plt.subplots(figsize=figsize)
-    feature_cols = st.session_state['feature_cols']
-    ax.scatter(df[feature_cols[0]], df[feature_cols[1]], s=.3, alpha=.07)
+    ax.scatter(df['feat_0'], df['feat_1'], s=.2, alpha=.02)
     if x is not None:
         ax.scatter(x, y, marker='+', c='r')
+    plt.xlim(df['feat_0'].min()-data_pad, df['feat_0'].max() + data_pad)
+    plt.ylim(df['feat_1'].min()-data_pad, df['feat_1'].max() + data_pad)
     plt.axis('off')
     return fig, ax
 
@@ -141,9 +173,10 @@ def get_closest_galaxies(df, tree, x, y, max_neighbours=1):
 
 def show_gallery_of_galaxies(df):
 
-    image_urls = df.apply(get_galaxy_url, axis=1)
-    # for url in image_urls:
-    #     st.image(url)
+    if 'url' in df.columns.values:
+        image_urls = df['url']
+    else:
+        image_urls = df.apply(get_galaxy_url, axis=1)
 
     opening_html = '<div style=display:flex;flex-wrap:wrap>'
     closing_html = '</div>'
@@ -209,21 +242,27 @@ st.set_page_config(
 )
 
 @st.cache_resource
-def load_umap():
-    return pd.read_parquet('100k_umap_2n.parquet')
+def load_umap(name):
+    # df = pd.read_parquet('100k_umap_2n.parquet')
+    if name == 'Featured v1':
+        df = pd.read_parquet('100k_feat_umap_2n.parquet')
+    elif name == 'Featured v2':
+        df = pd.read_parquet('all_feat_umap_2n.parquet')
+    elif name == 'Featured and Smooth':
+        df = pd.read_parquet('100k_umap_2n.parquet')
+    else:
+        raise ValueError(name)
+    umap_cols = ['umap_{}'.format(n) for n in range(2)]
+    feat_cols = [col.replace('umap_', 'feat_') for col in umap_cols]
+    df = df.rename(columns=dict(zip(umap_cols, feat_cols)))
+    return df
 
-@st.cache_resource
-def load_pca():
-    return pd.read_parquet('100k_pca_2n.parquet')
 
 def fit_tree(df):
-    X = df[st.session_state['feature_cols']]
+    X = df[['feat_0', 'feat_1']]
     # will always return 100 neighbours, cut list when used
-    nbrs = NearestNeighbors(n_neighbors=100, algorithm='ball_tree').fit(X)
+    nbrs = NearestNeighbors(n_neighbors=500, algorithm='ball_tree').fit(X)
     return nbrs
-    # df_locs = ['decals_{}.csv'.format(n) for n in range(4)]
-    # dfs = [pd.read_csv(df_loc) for df_loc in df_locs]
-    # return pd.concat(dfs)
 
 if __name__ == '__main__':
 
